@@ -1,4 +1,4 @@
-import select, logging, sys, queue, struct, socket
+import select, logging, sys, queue, socket
 from ChatSocket import ChatSocket
 from ChatServerClient import ChatServerClient
 # class Room:
@@ -17,6 +17,8 @@ class ChatServer(ChatSocket):
         # DEBUG
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # END DEBUG
+        self.host = host
+        self.port = port
         self.sock.bind((host, port))
         self.sock.listen(connections)
         #Non blocking
@@ -28,65 +30,73 @@ class ChatServer(ChatSocket):
         for sock in self.clients:
             sock.put(data)
 
-    def remove_client(self, sock):
-        self.clients.remove(sock)
-        sock.close()
+    def add_client(self, sock):
+        client, clientaddress = sock.accept()
+        logging.info("New Connection coming from " + str(clientaddress[0]) + " on port " + str(clientaddress[1]))
+        client.setblocking(0)
+        # Record the client in list of clients and generate an empty message queue for them
+        self.clients.append(ChatServerClient(client))
+        self.clients[-1].set(id=self.c,address=clientaddress[0])
+        self.c += 1
 
-    def handlePacket(self, header,sock):
-        # Now that we've received the header
+    def remove_client(self, client):
+        logging.info("Connection " + client.get("address") + " is disconnecting")
+        self.clients.remove(client)
+        client.close()
+
+    def handlePacket(self, client, length):
+        # Now that we've received the length
         # Grab the packet off the stream
-        packet = self.unpackPacket(header, sock)
+        header, packet = client.unpackPacket(length)
         if header == self.headers["Login"]:
             logging.debug("Login Attempt...")
 
-            sock.name = packet["name"]
-            sock.id = self.c
+            client.set(name=packet["name"])
 
             # Create the login confirm packet
-            confirm = self.packPacket(self.headers["LoginConfirm"], id=self.c)
+            confirm = client.packPacket(self.headers["LoginConfirm"], id=client.get("id"))
             # Add it to the socks message queue
-            sock.put(confirm)
+            client.put(confirm)
             logging.debug(packet["name"] + " has logged in with id: " + str(self.c))
-
-            self.c += 1
         elif header == self.headers["ClientMessage"]:
             logging.debug("New Message!")
-            new_message = self.packPacket(self.headers["ServerMessage"], name=sock.name, message=packet["message"])
+            new_message = self.packPacket(self.headers["ServerMessage"], name=client.get("name"), message=packet["message"])
             self.addToAllQueues(new_message)
 
     def listen(self):
+        print("Welcome to the RudeChat Server Version " + self.VERSION)
         while True:
             # The server socket to check for incoming clients aswell as all
             # of our current clients which may have sent us something
             readers = [self.sock] + self.clients
 
+            writers =  []
             # All clients should return as writers
-            writers =  self.clients
+            for client in self.clients:
+                if client.writing:
+                    self.clients.append(client)
 
             readable, writable, exceptional = select.select(readers, writers, self.clients, 8000)
+            logging.debug("Listening on " + self.host + ":" + str(self.port))
 
             for sock in readable:
                 if sock is self.sock: # Server Case
-                    logging.info("New Connection!")
-                    client, clientaddress = sock.accept()
-                    client.setblocking(0)
-                    # Record the client in list of clients and generate an empty message queue for them
-                    self.clients.append(ChatServerClient(client))
+                    self.add_client(self.sock)
                 else: # Client Case
+                    logging.info("Received a new message from client ")
                     # Grab the header off the stream
-                    header = sock.chat_recv(self.typeLength["short"])
-                    if header:
-                        header = struct.unpack(self.structKeys["short"], header)[0]
-                        logging.debug("Client sent us a " +  self.headers[header] + " packet")
-                        self.handlePacket(header, sock)
-                    else: #Empty header means dead connection
-                        logging.info(sock.name + " has disconnected")
-                        remove_client(sock)
-                for sock in writable:
-                    if sock.writing == True:
-                        next_msg = sock.get()
-                        logging.debug("Sending: " + str(next_msg) + " to " + sock.name)
-                        sock.chat_send(next_msg, len(next_msg))
+                    length = sock.chat_recv(self.typeLength["short"])
+                    logging.debug("Raw bytes: " +  str(length))
+                    if length:
+                        length = sock.unpack("short", length)[0]
+                        logging.debug("Client sent us a " +  str(length) + " bytes")
+                        self.handlePacket(sock, length)
+                    else: # Empty length means dead connection
+                        self.remove_client(sock)
 
-                for sock in exceptional: # Exception means its dead
-                    remove_client(sock)
+            for sock in writable:
+                #logging.debug("Sending: " + str(next_msg) + " to " + sock.name)
+                sock.send_waiting()
+
+            for sock in exceptional: # Exception means its dead
+                remove_client(sock)

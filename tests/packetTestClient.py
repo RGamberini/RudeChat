@@ -8,13 +8,12 @@ class packetClient(ChatSocket.ChatSocket):
         self.sock.connect((host,port))
 
     def login(self, name):
-        self.chat_send(struct.pack('>H', 0x00), 2)
-        name = name.encode('utf-8')
-        self.chat_send(struct.pack('>H', len(name)), 2)
-        self.chat_send(name, len(name))
+        login_packet = self.packPacket(self.headers["Login"], name=name)
+        self.put(login_packet)
+        self.send_waiting()
 
     def sendMessage(self, message):
-        print("TODO")
+        self.put(self.packPacket(self.headers["ClientMessage"], id=0, message="FUCK"))
 
 client = packetClient()
 client.connect("localhost", 3232)

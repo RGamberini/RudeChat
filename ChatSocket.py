@@ -3,7 +3,11 @@ class ChatSocket(object):
     # TODO
     # Read packet length first
     # Redo chat_send and chat_recv I may not need the wrapper at all
-    #Packet Info
+
+    # Version Info
+    VERSION = "0.1"
+
+    # Packet Info
     packets =(
     {"name":"string"},
     {"id":"int"},
@@ -37,40 +41,27 @@ class ChatSocket(object):
         self.writing = False
         # Allows my socket to be called by select()
         self.fileno = self.sock.fileno
+        self.close = self.sock.close
 
-    def chat_send(self, msg, MSGLEN):
-        # Probably not needed anymore, if you pass a string
-        # of the wrong size this will pad it to the right size
-        # but I don't really pass this function strings
-        if (isinstance(msg, str) and len(msg) < MSGLEN):
-            msg = bytes(msg.ljust(length), "UTF-8")
-        totalsent = 0
-        # Loop until everything is sent
-        while totalsent < MSGLEN:
-            sent = self.sock.send(msg[totalsent:])
-            if sent == 0:
-                raise RuntimeError("socket connection broken")
-            totalsent = totalsent + sent
+    def send_waiting(self):
+        sent = self.sock.send(self.message_buffer)
+        if sent == 0:
+            raise RuntimeError("socket connection broken")
+        message_buffer = message_buffer[sent:]
+        if message_buffer == b"":
+            self.writing = False
 
-    def chat_recv(self, MSGLEN):
-        msg = []
-        bytes_recd = 0
-        # Loop until everything is sent
-        while bytes_recd < MSGLEN:
-            pull = self.sock.recv(MSGLEN - bytes_recd)
-            if pull == b'':
-                raise RuntimeError("socket connection broken")
-            msg.append(pull)
-            bytes_recd += len(pull)
-        return b''.join(msg)
+    # Without specifying MSGLEN chat_recv pulls as much as it can (2048 bits)
+    def chat_recv(self, MSGLEN=2048):
+        return self.sock.recv(MSGLEN)
 
     # Pull a type off the stream
-    def unpack(self,ctype,sock):
+    def unpack(self,ctype,data,position=0):
         if ctype in self.structKeys.keys():
-            return struct.unpack(self.structKeys[ctype],sock.chat_recv(self.typeLength[ctype]))[0]
+            return struct.unpack(self.structKeys[ctype], data[position:position + self.typeLength[ctype]])[0], self.typeLength[ctype]
         elif ctype == "string":
-            bit_length = self.unpack("short", sock)
-            return sock.chat_recv(bit_length).decode('utf-8')
+            bit_length = self.unpack("short", data, position)[0]
+            return data[position:position +bit_length].decode('utf-8'), bit_length + self.typeLength["short"]
 
     # Encodes the data you pass it into bytes
     # Then returns it to you in a concatenated bytestring
@@ -84,11 +75,15 @@ class ChatSocket(object):
             return self.pack("short", len(byte_string)) + byte_string
 
     # Goes through the packet definition and pulls everything
-    def unpackPacket(self,header,sock):
+    # packed_packet means I expect a packet right off the stream
+    def unpackPacket(self, length):
+        packed_packet = self.chat_recv(length)
+        header, position = self.unpack("short", packed_packet)
         packet = self.packets[header]
         for key, ctype in packet.items():
-            packet[key] = self.unpack(ctype, sock)
-        return packet
+            packet[key], step = self.unpack(ctype, packed_packet, position)
+            position += step
+        return header, packet
 
     # A packets is a dictionary key:value
     def packPacket(self,header,**packet):
@@ -96,11 +91,12 @@ class ChatSocket(object):
         for key, data in packet.items():
             #print("Building packet " + str(self.headers[header]) + " currently: " + packed_packet)
             packed_packet += self.pack(self.packets[header][key],data)
+        packed_packet = self.pack("short", len(packed_packet)) + packed_packet # Preface packets with length
         return packed_packet
 
     def put(self, data):
         self.writing = True
-        self.message_buffer.put_nowait(data)
+        self.message_buffer += data
 
     def get(self):
         self.writing = False

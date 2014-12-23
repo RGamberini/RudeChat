@@ -23,9 +23,9 @@ class ChatClient(ChatSocket):
     def handleInput(self, read):
         print(read)
 
-    def handlePacket(self, header, **packet):
+    def handlePacket(self, length, **packet):
         if packet == {}: # Server -> Client case
-            packet = self.unpackPacket(header, self.sock)
+            header, packet = self.unpackPacket(header, self.sock)
             if header == self.headers["LoginConfirm"]:
                 self.id = packet["id"]
             elif header == self.headers["ServerMessage"]:
