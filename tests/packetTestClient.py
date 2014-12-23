@@ -9,6 +9,7 @@ class packetClient(ChatSocket.ChatSocket):
 
     def login(self, name):
         login_packet = self.packPacket(self.headers["Login"], name=name)
+        print(self.byteToHex(login_packet))
         self.put(login_packet)
         self.send_waiting()
 

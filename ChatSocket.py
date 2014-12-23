@@ -1,4 +1,5 @@
 import socket, queue, struct
+from ChatExceptions import PacketIncompleteError
 class ChatSocket(object):
     # TODO
     # Read packet length first
@@ -43,12 +44,15 @@ class ChatSocket(object):
         self.fileno = self.sock.fileno
         self.close = self.sock.close
 
+    def byteToHex(self, byteStr):
+	    return ''.join( [ "%02X " % x for x in byteStr ] ).strip()
+
     def send_waiting(self):
         sent = self.sock.send(self.message_buffer)
         if sent == 0:
             raise RuntimeError("socket connection broken")
-        message_buffer = message_buffer[sent:]
-        if message_buffer == b"":
+        self.message_buffer = self.message_buffer[sent:]
+        if self.message_buffer == b"":
             self.writing = False
 
     # Without specifying MSGLEN chat_recv pulls as much as it can (2048 bits)
@@ -60,15 +64,15 @@ class ChatSocket(object):
         if ctype in self.structKeys.keys():
             return struct.unpack(self.structKeys[ctype], data[position:position + self.typeLength[ctype]])[0], self.typeLength[ctype]
         elif ctype == "string":
-            bit_length = self.unpack("short", data, position)[0]
-            return data[position:position +bit_length].decode('utf-8'), bit_length + self.typeLength["short"]
+            bit_length, step = self.unpack("short", data, position)
+            position += step
+            return data[position:position + bit_length].decode('utf-8'), bit_length
 
     # Encodes the data you pass it into bytes
     # Then returns it to you in a concatenated bytestring
     def pack(self,ctype,data):
         if ctype in self.structKeys.keys():
             result = struct.pack(self.structKeys[ctype],data)
-            #print("Passed: " + str(data) + ", Result: " + str(result) + ", is number: " + str(isinstance(result[0], int)))
             return result
         elif ctype == "string":
             byte_string = data.encode('utf-8')
@@ -76,13 +80,19 @@ class ChatSocket(object):
 
     # Goes through the packet definition and pulls everything
     # packed_packet means I expect a packet right off the stream
-    def unpackPacket(self, length):
-        packed_packet = self.chat_recv(length)
+    def unpackPacket(self, length, packed_packet=None):
+        if not packed_packet:
+            packed_packet = self.chat_recv(length)
+        if len(packed_packet) < length:
+            raise PacketIncompleteError(packed_packet)
         header, position = self.unpack("short", packed_packet)
         packet = self.packets[header]
         for key, ctype in packet.items():
+            #print("Before:", self.byteToHex(packed_packet[before:position]), "Read:", word, "left:", self.byteToHex(packed_packet[position:]))
             packet[key], step = self.unpack(ctype, packed_packet, position)
+            before = position
             position += step
+            word = key
         return header, packet
 
     # A packets is a dictionary key:value

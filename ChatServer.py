@@ -1,11 +1,6 @@
 import select, logging, sys, queue, socket
 from ChatSocket import ChatSocket
 from ChatServerClient import ChatServerClient
-# class Room:
-#     def __init__(self, name, password="", MOTD=""):
-#         self.name = name
-#         self.password = password
-#         self.MOTD = MOTD
 
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -25,6 +20,7 @@ class ChatServer(ChatSocket):
         self.sock.setblocking(0)
         # List of currently connected clients
         self.clients = []
+        print("Welcome to the RudeChat Server Version " + self.VERSION)
 
     def addToAllQueues(self, data):
         for sock in self.clients:
@@ -57,46 +53,47 @@ class ChatServer(ChatSocket):
             confirm = client.packPacket(self.headers["LoginConfirm"], id=client.get("id"))
             # Add it to the socks message queue
             client.put(confirm)
-            logging.debug(packet["name"] + " has logged in with id: " + str(self.c))
+            logging.debug(packet["name"] + " has logged in with id: " + str(client.get("id")))
         elif header == self.headers["ClientMessage"]:
             logging.debug("New Message!")
             new_message = self.packPacket(self.headers["ServerMessage"], name=client.get("name"), message=packet["message"])
             self.addToAllQueues(new_message)
 
     def listen(self):
-        print("Welcome to the RudeChat Server Version " + self.VERSION)
-        while True:
-            # The server socket to check for incoming clients aswell as all
-            # of our current clients which may have sent us something
-            readers = [self.sock] + self.clients
+        # The server socket to check for incoming clients aswell as all
+        # of our current clients which may have sent us something
+        readers = [self.sock] + self.clients
 
-            writers =  []
-            # All clients should return as writers
-            for client in self.clients:
-                if client.writing:
-                    self.clients.append(client)
+        writers =  []
+        # All clients should return as writers
+        for client in self.clients:
+            if client.writing:
+                writers.append(client)
 
-            readable, writable, exceptional = select.select(readers, writers, self.clients, 8000)
-            logging.debug("Listening on " + self.host + ":" + str(self.port))
+        readable, writable, exceptional = select.select(readers, writers, self.clients)
+        logging.debug("Listening on " + self.host + ":" + str(self.port))
 
-            for sock in readable:
-                if sock is self.sock: # Server Case
-                    self.add_client(self.sock)
-                else: # Client Case
-                    logging.info("Received a new message from client ")
-                    # Grab the header off the stream
+        for sock in readable:
+            if sock is self.sock: # Server Case
+                self.add_client(self.sock)
+            else: # Client Case
+                logging.info("Received a new message from client ")
+                # Grab the header off the stream
+                try:
                     length = sock.chat_recv(self.typeLength["short"])
-                    logging.debug("Raw bytes: " +  str(length))
-                    if length:
-                        length = sock.unpack("short", length)[0]
-                        logging.debug("Client sent us a " +  str(length) + " bytes")
-                        self.handlePacket(sock, length)
-                    else: # Empty length means dead connection
-                        self.remove_client(sock)
+                except ConnectionResetError:
+                    self.remove_client(sock)
+                    break
+                if length:
+                    length = sock.unpack("short", length)[0]
+                    logging.debug("Client sent us " +  str(length) + " bytes")
+                    self.handlePacket(sock, length)
+                else: # Empty length means dead connection
+                    self.remove_client(sock)
 
-            for sock in writable:
-                #logging.debug("Sending: " + str(next_msg) + " to " + sock.name)
-                sock.send_waiting()
+        for sock in writable:
+            #logging.debug("Sending: " + str(next_msg) + " to " + sock.name)
+            sock.send_waiting()
 
-            for sock in exceptional: # Exception means its dead
-                remove_client(sock)
+        for sock in exceptional: # Exception means its dead
+            remove_client(sock)
