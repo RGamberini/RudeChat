@@ -1,72 +1,74 @@
 import struct, queue, select, sys
 from ChatSocket import ChatSocket
+from collections import deque
 class ChatClient(ChatSocket):
     id = -1
     def __init__(self,name):
         super().__init__()
         self.name = name
-        self.message_queue = queue.Queue()
+        self.message_queue = deque()
 
     def connect(self, host, port):
+        print("Establishing connection to", host, "on port", str(port))
         self.sock.connect((host,port))
+        print("Connected")
         self.sock.setblocking(0)
         self.sock = ChatSocket(self.sock)
+        self.sock.set(host=host,port=port)
+
+    def put(self, data):
+        self.writing = True
+        self.message_queue.append(data)
+
+    def putString(self, *argv):
+        self.put(" ".join(map(str,argv)))
 
     def disconnect(self):
-        with self.message_queue.mutex:
-            self.message_queue.clear()
+        print("Server Connection to", self.sock.get("host"), "Lost")
         self.sock.close()
 
-    def login(self,name):
-        self.handlePacket(self.headers["Login"], name=name)
+    def login(self):
+        login_packet = self.sock.packPacket(self.headers["Login"], name=self.name)
+        print("Logging in with name:", self.name)
+        self.sock.put(login_packet)
+
+    def sendMessage(self, payload):
+        self.sock.packPacket(self.headers["ClientMessage"], id=self.get("id"), message=payload)
 
     def handleInput(self, read):
-        print(read)
+        self.sendMessage(read)
 
-    def handlePacket(self, length, **packet):
-        if packet == {}: # Server -> Client case
-            header, packet = self.unpackPacket(header, self.sock)
-            if header == self.headers["LoginConfirm"]:
-                self.id = packet["id"]
-            elif header == self.headers["ServerMessage"]:
-                # It's important to stress the difference bewteen the two .put() methods
-                # self.sock.put() which must be passed a packed packet afterwhich it's sent down the wire
-                # self.put() sends the output to the stream_out in listen
-                self.put(packet["name"] + ": " + packet["message"])
-        else: # Client -> Server case
-            self.sock.put(self.packPacket(header, **packet))
+    # It's important to stress the difference bewteen the two .put() methods
+    # self.sock.put() which must be passed a packed packet afterwhich it's sent down the wire
+    # self.put() sends the output to the stream_out in listen
+
+    def handlePacket(self, server, length):
+        header, packet = server.unpackPacket(length)
+        if header == self.headers["LoginConfirm"]:
+            self.set(id=packet["id"])
+            print("Logged in with ID: ", packet["id"])
+        elif header == self.headers["ServerMessage"]:
+            print(packet["name"] + ":", packet["message"])
 
     def listen(self, stream_in=sys.stdin, stream_out = sys.stdout):
-        self.login(self.name)
         while True:
             readers = [self.sock, stream_in]
-            writers = [self.sock, stream_out]
+            writers = [self.sock]
             readable, writable, exceptional = select.select(readers, writers, writers)
 
             for reader in readable:
                 if reader is self.sock:
-                    header = reader.chat_recv(self.typeLength["short"])
-                    if header:
-                        self.handlePacket(struct.unpack(self.structKeys["short"], header))
+                    length = reader.chat_recv(self.typeLength["short"])
+                    if length:
+                        length = reader.unpack("short", length)[0]
+                        self.handlePacket(reader,length)
                     else:
-                        self.put("Connection lost")
+                        print("Connection lost")
                         self.disconnect()
                 elif reader is stream_in:
                     read = stream_in.readline()
-                    handleInput(read)
+                    self.handleInput(read)
 
             for writer in writers:
-                if writer is self.sock:
-                    try:
-                        next_msg = writer.get()
-                    except Queue.Empty:
-                        pass
-                    else:
-                        writer.chat_send(next_msg)
-                else:
-                    try:
-                        next_msg = self.get()
-                    except Queue.Empty:
-                        pass
-                    else:
-                        stream_out.write(next_msg)
+                if writer is self.sock and writer.writing:
+                    writer.send_waiting()

@@ -55,7 +55,7 @@ class ChatServer(ChatSocket):
             client.put(confirm)
             logging.debug(packet["name"] + " has logged in with id: " + str(client.get("id")))
         elif header == self.headers["ClientMessage"]:
-            logging.debug("New Message!")
+            logging.debug(client.get("name") + ": " + packet["message"])
             new_message = self.packPacket(self.headers["ServerMessage"], name=client.get("name"), message=packet["message"])
             self.addToAllQueues(new_message)
 

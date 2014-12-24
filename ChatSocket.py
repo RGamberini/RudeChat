@@ -43,11 +43,23 @@ class ChatSocket(object):
         # Allows my socket to be called by select()
         self.fileno = self.sock.fileno
         self.close = self.sock.close
+        self.properties = {} # For storing useful information
 
     def byteToHex(self, byteStr):
 	    return ''.join( [ "%02X " % x for x in byteStr ] ).strip()
 
+    def set(self, **kwargs):
+        for k,v in kwargs.items():
+            self.properties[k] = v
+
+    def get(self, key):
+        try:
+            return self.properties[key]
+        except KeyError:
+            return None
+
     def send_waiting(self):
+        print(str(self.message_buffer))
         sent = self.sock.send(self.message_buffer)
         if sent == 0:
             raise RuntimeError("socket connection broken")
