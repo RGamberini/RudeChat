@@ -86,13 +86,14 @@ class ChatSocket(object):
         if len(packed_packet) < length:
             raise PacketIncompleteError(packed_packet)
         header, position = self.unpack("short", packed_packet)
-        packet = self.packets[header]
+        packet = self.packets[header].copy()
+        #before, word = 0, "header" # DEBUG
         for key, ctype in packet.items():
-            #print("Before:", self.byteToHex(packed_packet[before:position]), "Read:", word, "left:", self.byteToHex(packed_packet[position:]))
+            #print("Before:", self.byteToHex(packed_packet[before:position]), "Read:", word, "left:", self.byteToHex(packed_packet[position:])) # DEBUG
             packet[key], step = self.unpack(ctype, packed_packet, position)
             before = position
             position += step
-            word = key
+            #word = key # DEBUG
         return header, packet
 
     # A packets is a dictionary key:value

@@ -1,4 +1,4 @@
-import ChatSocket, struct
+import ChatSocket, struct, sys
 dataClasses = {"short":2}
 class packetClient(ChatSocket.ChatSocket):
     def __init__(self,sock=None):
@@ -16,8 +16,9 @@ class packetClient(ChatSocket.ChatSocket):
     def sendMessage(self, message):
         self.put(self.packPacket(self.headers["ClientMessage"], id=0, message="FUCK"))
 
+name = sys.argv[1]
 client = packetClient()
 client.connect("localhost", 3232)
-client.login("Rudy")
+client.login(name)
 input()
 client.sock.close()
