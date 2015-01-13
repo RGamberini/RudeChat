@@ -2,18 +2,17 @@ import socket, queue, struct
 from ChatExceptions import PacketIncompleteError
 class ChatSocket(object):
     # TODO
-    # Read packet length first
-    # Redo chat_send and chat_recv I may not need the wrapper at all
-
+    # Packet definitions must go into either a tuple of tuples or an enum or
+    # ordereddict however storing the info in a normal dict causes
     # Version Info
-    VERSION = "0.1"
+    VERSION = "0.2"
 
     # Packet Info
     packets =(
-    {"name":"string"},
-    {"id":"int"},
-    {"id":"int", "message":"string"},
-    {"name":"string", "message":"string"}
+    ("Login", ("name","string")),
+    ("LoginConfirm", ("id","int")),
+    ("ClientMessage", ("id","int"), ("message","string")),
+    ("ServerMessage", ("name","string"), ("message","string"))
     )
 
     # More packet info
@@ -31,7 +30,7 @@ class ChatSocket(object):
     # Maps types to what you need to call struct.unpack()
     structKeys = {"short":">H", "int":">I"}
 
-    typeLength = {"short":2, "int": 8}
+    typeLength = {"short":2, "int": 4}
 
     def __init__(self,sock=None):
         if (sock is None):
@@ -48,18 +47,18 @@ class ChatSocket(object):
     def byteToHex(self, byteStr):
 	    return ''.join( [ "%02X " % x for x in byteStr ] ).strip()
 
-    def set(self, **kwargs):
+    def setProperty(self, **kwargs):
         for k,v in kwargs.items():
             self.properties[k] = v
 
-    def get(self, key):
+    def getProperty(self, key):
         try:
             return self.properties[key]
         except KeyError:
             return None
 
     def send_waiting(self):
-        print(str(self.message_buffer))
+        # print(str(self.message_buffer))
         sent = self.sock.send(self.message_buffer)
         if sent == 0:
             raise RuntimeError("socket connection broken")
@@ -74,11 +73,17 @@ class ChatSocket(object):
     # Pull a type off the stream
     def unpack(self,ctype,data,position=0):
         if ctype in self.structKeys.keys():
-            return struct.unpack(self.structKeys[ctype], data[position:position + self.typeLength[ctype]])[0], self.typeLength[ctype]
+            selectdata = data[position:position + self.typeLength[ctype]] # DEBUG
+            x = struct.unpack_from(self.structKeys[ctype], data, position)[0], self.typeLength[ctype] # DEBUG
+            print("Attempt to unpack",ctype,"from",data[position:],"resulted in",x) # DEBUG
+            return x
         elif ctype == "string":
             bit_length, step = self.unpack("short", data, position)
             position += step
-            return data[position:position + bit_length].decode('utf-8'), bit_length
+            # return data[position:position + bit_length].decode('utf-8'), bit_length
+            x = data[position:position + bit_length].decode('utf-8') # DEBUG
+            print("Attempt to unpack",ctype,"from",data[position:],"resulted in",x) # DEBUG
+            return x, bit_length # DEBUG
 
     # Encodes the data you pass it into bytes
     # Then returns it to you in a concatenated bytestring
@@ -97,24 +102,28 @@ class ChatSocket(object):
             packed_packet = self.chat_recv(length)
         if len(packed_packet) < length:
             raise PacketIncompleteError(packed_packet)
+        print("Received", packed_packet)
         header, position = self.unpack("short", packed_packet)
         packet = self.packets[header].copy()
         #before, word = 0, "header" # DEBUG
-        for key, ctype in packet.items():
+        for i, ctype in packet.iter():
             #print("Before:", self.byteToHex(packed_packet[before:position]), "Read:", word, "left:", self.byteToHex(packed_packet[position:])) # DEBUG
             packet[key], step = self.unpack(ctype, packed_packet, position)
             before = position
             position += step
             #word = key # DEBUG
+        print("Unpack", str(packet)) # DEBUG
         return header, packet
 
     # A packets is a dictionary key:value
-    def packPacket(self,header,**packet):
+    def packPacket(self,header,*packet):
+        print("Pack", str(packet)) # DEBUG
         packed_packet = self.pack("short", header)
-        for key, data in packet.items():
-            #print("Building packet " + str(self.headers[header]) + " currently: " + packed_packet)
-            packed_packet += self.pack(self.packets[header][key],data)
+        for i,data in packet.iter():
+            packed_packet += self.pack(self.packets[header][i],data)
+            # print("Packed", self.packets[header][key],"full byte string: ", self.byteToHex(packed_packet))
         packed_packet = self.pack("short", len(packed_packet)) + packed_packet # Preface packets with length
+        print("Sending", packed_packet)
         return packed_packet
 
     def put(self, data):

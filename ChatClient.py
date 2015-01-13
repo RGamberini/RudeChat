@@ -14,7 +14,7 @@ class ChatClient(ChatSocket):
         print("Connected")
         self.sock.setblocking(0)
         self.sock = ChatSocket(self.sock)
-        self.sock.set(host=host,port=port)
+        self.sock.setProperty(host=host,port=port)
 
     def put(self, data):
         self.writing = True
@@ -24,7 +24,7 @@ class ChatClient(ChatSocket):
         self.put(" ".join(map(str,argv)))
 
     def disconnect(self):
-        print("Server Connection to", self.sock.get("host"), "Lost")
+        print("Server Connection to", self.sock.getProperty("host"), "Lost")
         self.sock.close()
 
     def login(self):
@@ -33,10 +33,12 @@ class ChatClient(ChatSocket):
         self.sock.put(login_packet)
 
     def sendMessage(self, payload):
-        self.sock.packPacket(self.headers["ClientMessage"], id=self.get("id"), message=payload)
+        message_packet = self.sock.packPacket(self.headers["ClientMessage"], id=self.getProperty("id"), message=payload)
+        # print(self.name + ":",payload)
+        self.sock.put(message_packet)
 
     def handleInput(self, read):
-        self.sendMessage(read)
+        self.sendMessage("Hello World")
 
     # It's important to stress the difference bewteen the two .put() methods
     # self.sock.put() which must be passed a packed packet afterwhich it's sent down the wire
@@ -45,7 +47,7 @@ class ChatClient(ChatSocket):
     def handlePacket(self, server, length):
         header, packet = server.unpackPacket(length)
         if header == self.headers["LoginConfirm"]:
-            self.set(id=packet["id"])
+            self.setProperty(id=packet["id"])
             print("Logged in with ID: ", packet["id"])
         elif header == self.headers["ServerMessage"]:
             print(packet["name"] + ":", packet["message"])

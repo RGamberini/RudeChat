@@ -1,6 +1,5 @@
 import select, logging, sys, queue, socket
 from ChatSocket import ChatSocket
-from ChatServerClient import ChatServerClient
 
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -21,6 +20,7 @@ class ChatServer(ChatSocket):
         # List of currently connected clients
         self.clients = []
         print("Welcome to the RudeChat Server Version " + self.VERSION)
+        logging.debug("Listening on " + host + ":" + str(port))
 
     def addToAllQueues(self, data):
         for sock in self.clients:
@@ -31,12 +31,12 @@ class ChatServer(ChatSocket):
         logging.info("New Connection coming from " + str(clientaddress[0]) + " on port " + str(clientaddress[1]))
         client.setblocking(0)
         # Record the client in list of clients and generate an empty message queue for them
-        self.clients.append(ChatServerClient(client))
-        self.clients[-1].set(id=self.c,address=clientaddress[0])
+        self.clients.append(ChatSocket(client))
+        self.clients[-1].setProperty(id=self.c,address=clientaddress[0])
         self.c += 1
 
     def remove_client(self, client):
-        logging.info("Connection " + client.get("address") + " is disconnecting")
+        logging.info("Connection " + client.getProperty("address") + " is disconnecting")
         self.clients.remove(client)
         client.close()
 
@@ -47,16 +47,16 @@ class ChatServer(ChatSocket):
         if header == self.headers["Login"]:
             logging.debug("Login Attempt...")
 
-            client.set(name=packet["name"])
+            client.setProperty(name=packet["name"])
 
             # Create the login confirm packet
-            confirm = client.packPacket(self.headers["LoginConfirm"], id=client.get("id"))
+            confirm = client.packPacket(self.headers["LoginConfirm"], id=client.getProperty("id"))
             # Add it to the socks message queue
             client.put(confirm)
-            logging.debug(packet["name"] + " has logged in with id: " + str(client.get("id")))
+            logging.debug(packet["name"] + " has logged in with id: " + str(client.getProperty("id")))
         elif header == self.headers["ClientMessage"]:
-            logging.debug(client.get("name") + ": " + packet["message"])
-            new_message = self.packPacket(self.headers["ServerMessage"], name=client.get("name"), message=packet["message"])
+            logging.debug(client.getProperty("name") + ": " + packet["message"])
+            new_message = self.packPacket(self.headers["ServerMessage"], name=client.getProperty("name"), message=packet["message"])
             self.addToAllQueues(new_message)
 
     def listen(self):
@@ -71,7 +71,6 @@ class ChatServer(ChatSocket):
                 writers.append(client)
 
         readable, writable, exceptional = select.select(readers, writers, self.clients)
-        logging.debug("Listening on " + self.host + ":" + str(self.port))
 
         for sock in readable:
             if sock is self.sock: # Server Case
@@ -81,7 +80,7 @@ class ChatServer(ChatSocket):
                 # Grab the header off the stream
                 try:
                     length = sock.chat_recv(self.typeLength["short"])
-                except ConnectionResetError:
+                except ConnectionResetPropertyError:
                     self.remove_client(sock)
                     break
                 if length:
